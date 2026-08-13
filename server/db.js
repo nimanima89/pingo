@@ -31,6 +31,9 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS chats (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL DEFAULT 'direct',
+    title TEXT NOT NULL DEFAULT '',
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     created_at INTEGER NOT NULL
   );
 
@@ -51,5 +54,17 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id, id);
 `);
+
+// columns added after the first release, so existing databases keep working
+for(const [table, column, definition] of [
+  ['users', 'avatar', `TEXT NOT NULL DEFAULT ''`],
+  ['users', 'theme', `TEXT NOT NULL DEFAULT 'light'`],
+  ['chats', 'type', `TEXT NOT NULL DEFAULT 'direct'`],
+  ['chats', 'title', `TEXT NOT NULL DEFAULT ''`],
+  ['chats', 'created_by', 'INTEGER']
+]) {
+  const exists = db.prepare(`SELECT 1 FROM pragma_table_info(?) WHERE name = ?`).get(table, column);
+  if(!exists) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
 
 export default db;

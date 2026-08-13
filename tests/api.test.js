@@ -97,6 +97,84 @@ test('creates a direct chat and finds the peer by email', async() => {
   assert.equal(denied.status, 404);
 });
 
+test('updates nickname, avatar and theme', async() => {
+  const {token} = await signup('profile@pingo.test', 'Old Name');
+
+  const updated = await call('/api/me', {method: 'PATCH', body: {name: 'New Name', avatar: '🦊', theme: 'dark'}, token});
+  assert.equal(updated.status, 200);
+  assert.deepEqual(
+    {name: updated.body.user.name, avatar: updated.body.user.avatar, theme: updated.body.user.theme},
+    {name: 'New Name', avatar: '🦊', theme: 'dark'}
+  );
+
+  const me = await call('/api/me', {token});
+  assert.equal(me.body.user.name, 'New Name');
+  assert.equal(me.body.user.theme, 'dark');
+
+  const invalid = await call('/api/me', {method: 'PATCH', body: {theme: 'neon'}, token});
+  assert.equal(invalid.status, 400);
+});
+
+test('creates a group chat only for its members', async() => {
+  const alice = await signup('g1@pingo.test', 'Group Alice');
+  const bob = await signup('g2@pingo.test', 'Group Bob');
+  const carol = await signup('g3@pingo.test', 'Group Carol');
+  const outsider = await signup('g4@pingo.test', 'Group Outsider');
+
+  const created = await call('/api/chats/group', {
+    method: 'POST',
+    body: {title: 'Weekend', memberIds: [bob.user.id, carol.user.id]},
+    token: alice.token
+  });
+  assert.equal(created.status, 200);
+  const {chatId} = created.body;
+
+  const bobChats = await call('/api/chats', {token: bob.token});
+  const group = bobChats.body.chats.find((chat) => chat.id === chatId);
+  assert.equal(group.type, 'group');
+  assert.equal(group.title, 'Weekend');
+  assert.equal(group.peers.length, 2);
+
+  const members = await call(`/api/chats/${chatId}/members`, {token: carol.token});
+  assert.equal(members.body.members.length, 3);
+
+  assert.equal((await call(`/api/chats/${chatId}/messages`, {token: outsider.token})).status, 404);
+  assert.equal((await call(`/api/chats/${chatId}/members`, {token: outsider.token})).status, 404);
+
+  const bad = await call('/api/chats/group', {method: 'POST', body: {title: '', memberIds: []}, token: alice.token});
+  assert.equal(bad.status, 400);
+});
+
+test('fans out group messages to every member', async() => {
+  const {io} = await import('socket.io-client').catch(() => ({io: null}));
+  if(!io) return;
+
+  const alice = await signup('gm1@pingo.test', 'GM Alice');
+  const bob = await signup('gm2@pingo.test', 'GM Bob');
+  const carol = await signup('gm3@pingo.test', 'GM Carol');
+
+  const {body: {chatId}} = await call('/api/chats/group', {
+    method: 'POST',
+    body: {title: 'Trip', memberIds: [bob.user.id, carol.user.id]},
+    token: alice.token
+  });
+
+  const sockets = [alice, bob, carol].map((account) => io(base, {auth: {token: account.token}}));
+  const [aliceSocket, bobSocket, carolSocket] = sockets;
+  const bobGot = new Promise((resolve) => bobSocket.on('message:new', resolve));
+  const carolGot = new Promise((resolve) => carolSocket.on('message:new', resolve));
+
+  await Promise.all(sockets.map((socket) => new Promise((resolve) => socket.on('connect', resolve))));
+  aliceSocket.emit('message:send', {chatId, text: 'hi team'});
+
+  for(const message of await Promise.all([bobGot, carolGot])) {
+    assert.equal(message.text, 'hi team');
+    assert.equal(message.senderName, 'GM Alice');
+  }
+
+  for(const socket of sockets) socket.close();
+});
+
 test('delivers messages over the socket to both participants', async() => {
   const {io} = await import('socket.io-client').catch(() => ({io: null}));
   if(!io) return; // socket.io-client is optional in this environment

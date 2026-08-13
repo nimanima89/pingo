@@ -8,7 +8,24 @@ const CODE_TTL_MS = 15 * 60 * 1000;
 const MAX_CODE_ATTEMPTS = 5;
 
 export function publicUser(user) {
-  return {id: user.id, email: user.email, name: user.name, verified: Boolean(user.verified)};
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    avatar: user.avatar || '',
+    theme: user.theme || 'light',
+    verified: Boolean(user.verified)
+  };
+}
+
+export function updateProfile(userId, {name, avatar, theme}) {
+  const fields = Object.entries({name, avatar, theme}).filter(([, value]) => value !== undefined);
+  if(fields.length) {
+    db.prepare(`UPDATE users SET ${fields.map(([key]) => `${key} = ?`).join(', ')} WHERE id = ?`)
+      .run(...fields.map(([, value]) => value), userId);
+  }
+
+  return db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
 }
 
 export function signToken(user) {

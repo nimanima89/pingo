@@ -12,6 +12,7 @@ export function findOrCreateDirectChat(userA, userB) {
   const existing = db.prepare(`
     SELECT a.chat_id AS id FROM chat_members a
     JOIN chat_members b ON a.chat_id = b.chat_id
+    JOIN chats c ON c.id = a.chat_id AND c.type = 'direct'
     WHERE a.user_id = ? AND b.user_id = ?
       AND (SELECT COUNT(*) FROM chat_members m WHERE m.chat_id = a.chat_id) = 2
   `).get(userA, userB);
@@ -19,7 +20,7 @@ export function findOrCreateDirectChat(userA, userB) {
   if(existing) return existing.id;
 
   const create = db.transaction(() => {
-    const info = db.prepare('INSERT INTO chats (created_at) VALUES (?)').run(Date.now());
+    const info = db.prepare(`INSERT INTO chats (type, created_by, created_at) VALUES ('direct', ?, ?)`).run(userA, Date.now());
     const chatId = Number(info.lastInsertRowid);
     const insert = db.prepare('INSERT INTO chat_members (chat_id, user_id) VALUES (?, ?)');
     insert.run(chatId, userA);
@@ -30,11 +31,39 @@ export function findOrCreateDirectChat(userA, userB) {
   return create();
 }
 
+export function createGroupChat({title, creatorId, memberIds}) {
+  const members = [...new Set([creatorId, ...memberIds])];
+  const known = db.prepare(
+    `SELECT id FROM users WHERE verified = 1 AND id IN (${members.map(() => '?').join(',')})`
+  ).all(...members).map((row) => row.id);
+
+  if(known.length < 2) return null;
+
+  const create = db.transaction(() => {
+    const info = db.prepare(`INSERT INTO chats (type, title, created_by, created_at) VALUES ('group', ?, ?, ?)`)
+      .run(title, creatorId, Date.now());
+    const chatId = Number(info.lastInsertRowid);
+    const insert = db.prepare('INSERT INTO chat_members (chat_id, user_id) VALUES (?, ?)');
+    for(const id of known) insert.run(chatId, id);
+    return chatId;
+  });
+
+  return create();
+}
+
+export function leaveChat(chatId, userId) {
+  db.prepare('DELETE FROM chat_members WHERE chat_id = ? AND user_id = ?').run(chatId, userId);
+  const remaining = db.prepare('SELECT COUNT(*) AS count FROM chat_members WHERE chat_id = ?').get(chatId).count;
+  if(remaining === 0) db.prepare('DELETE FROM chats WHERE id = ?').run(chatId);
+}
+
 export function listChats(userId) {
   return db.prepare(`
     SELECT
       c.id,
-      (SELECT json_group_array(json_object('id', u.id, 'name', u.name, 'email', u.email))
+      c.type,
+      c.title,
+      (SELECT json_group_array(json_object('id', u.id, 'name', u.name, 'email', u.email, 'avatar', u.avatar))
         FROM chat_members cm2 JOIN users u ON u.id = cm2.user_id
         WHERE cm2.chat_id = c.id AND cm2.user_id != ?) AS peers_json,
       (SELECT json_object('id', m.id, 'text', m.text, 'senderId', m.sender_id, 'createdAt', m.created_at)
@@ -46,16 +75,23 @@ export function listChats(userId) {
     ORDER BY COALESCE((SELECT MAX(m.id) FROM messages m WHERE m.chat_id = c.id), 0) DESC
   `).all(userId, userId, userId).map((row) => ({
     id: row.id,
+    type: row.type,
+    title: row.title,
     peers: JSON.parse(row.peers_json || '[]'),
     lastMessage: row.last_json ? JSON.parse(row.last_json) : null,
     unread: row.unread
   }));
 }
 
+const MESSAGE_SELECT = `
+  SELECT m.*, u.name AS sender_name, u.avatar AS sender_avatar
+  FROM messages m JOIN users u ON u.id = m.sender_id
+`;
+
 export function listMessages(chatId, {beforeId, limit = 50} = {}) {
   const rows = beforeId ?
-    db.prepare('SELECT * FROM messages WHERE chat_id = ? AND id < ? ORDER BY id DESC LIMIT ?').all(chatId, beforeId, limit) :
-    db.prepare('SELECT * FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT ?').all(chatId, limit);
+    db.prepare(`${MESSAGE_SELECT} WHERE m.chat_id = ? AND m.id < ? ORDER BY m.id DESC LIMIT ?`).all(chatId, beforeId, limit) :
+    db.prepare(`${MESSAGE_SELECT} WHERE m.chat_id = ? ORDER BY m.id DESC LIMIT ?`).all(chatId, limit);
 
   return rows.reverse().map(serializeMessage);
 }
@@ -63,7 +99,7 @@ export function listMessages(chatId, {beforeId, limit = 50} = {}) {
 export function createMessage({chatId, senderId, text}) {
   const info = db.prepare('INSERT INTO messages (chat_id, sender_id, text, created_at) VALUES (?, ?, ?, ?)')
     .run(chatId, senderId, text, Date.now());
-  const message = db.prepare('SELECT * FROM messages WHERE id = ?').get(info.lastInsertRowid);
+  const message = db.prepare(`${MESSAGE_SELECT} WHERE m.id = ?`).get(info.lastInsertRowid);
   markRead(chatId, senderId, message.id);
   return serializeMessage(message);
 }
@@ -76,10 +112,17 @@ export function markRead(chatId, userId, messageId) {
 export function searchUsers(query, excludeUserId) {
   const like = `%${query}%`;
   return db.prepare(`
-    SELECT id, name, email FROM users
+    SELECT id, name, email, avatar FROM users
     WHERE verified = 1 AND id != ? AND (name LIKE ? OR email LIKE ?)
     ORDER BY name LIMIT 20
   `).all(excludeUserId, like, like);
+}
+
+export function chatMembers(chatId) {
+  return db.prepare(`
+    SELECT u.id, u.name, u.email, u.avatar FROM chat_members cm
+    JOIN users u ON u.id = cm.user_id WHERE cm.chat_id = ? ORDER BY u.name
+  `).all(chatId);
 }
 
 function serializeMessage(message) {
@@ -87,6 +130,8 @@ function serializeMessage(message) {
     id: message.id,
     chatId: message.chat_id,
     senderId: message.sender_id,
+    senderName: message.sender_name,
+    senderAvatar: message.sender_avatar,
     text: message.text,
     createdAt: message.created_at
   };

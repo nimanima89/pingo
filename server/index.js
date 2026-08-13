@@ -5,11 +5,11 @@ import {Server as SocketServer} from 'socket.io';
 import {z} from 'zod';
 import {
   checkPassword, consumeEmailCode, createUser, findUserByEmail, issueEmailCode,
-  publicUser, requireAuth, signToken, userFromToken
+  publicUser, requireAuth, signToken, updateProfile, userFromToken
 } from './auth.js';
 import {
-  chatMemberIds, createMessage, findOrCreateDirectChat, isMember, listChats,
-  listMessages, markRead, searchUsers
+  chatMemberIds, chatMembers, createGroupChat, createMessage, findOrCreateDirectChat,
+  isMember, leaveChat, listChats, listMessages, markRead, searchUsers
 } from './chats.js';
 import {mailEnabled, sendVerificationCode} from './mail.js';
 
@@ -28,6 +28,15 @@ const signupSchema = z.object({
 const verifySchema = z.object({email: emailSchema, code: z.string().trim().length(6)});
 const loginSchema = z.object({email: emailSchema, password: z.string().min(1).max(128)});
 const messageSchema = z.object({chatId: z.number().int().positive(), text: z.string().trim().min(1).max(4096)});
+const profileSchema = z.object({
+  name: z.string().trim().min(1).max(64).optional(),
+  avatar: z.string().trim().max(8).optional(),
+  theme: z.enum(['light', 'dark']).optional()
+});
+const groupSchema = z.object({
+  title: z.string().trim().min(1).max(64),
+  memberIds: z.array(z.number().int().positive()).min(1).max(200)
+});
 
 function parse(schema, body, res) {
   const result = schema.safeParse(body);
@@ -99,6 +108,13 @@ app.get('/api/me', requireAuth, (req, res) => {
   res.json({user: publicUser(req.user), mailEnabled});
 });
 
+app.patch('/api/me', requireAuth, (req, res) => {
+  const data = parse(profileSchema, req.body, res);
+  if(!data) return;
+
+  res.json({user: publicUser(updateProfile(req.user.id, data))});
+});
+
 app.get('/api/users', requireAuth, (req, res) => {
   const query = String(req.query.q || '').trim();
   res.json({users: query ? searchUsers(query, req.user.id) : []});
@@ -116,6 +132,35 @@ app.post('/api/chats', requireAuth, (req, res) => {
 
   const chatId = findOrCreateDirectChat(req.user.id, userId);
   res.json({chatId});
+});
+
+app.post('/api/chats/group', requireAuth, (req, res) => {
+  const data = parse(groupSchema, req.body, res);
+  if(!data) return;
+
+  const chatId = createGroupChat({title: data.title, creatorId: req.user.id, memberIds: data.memberIds});
+  if(!chatId) return res.status(400).json({error: 'invalid_members'});
+
+  for(const memberId of chatMemberIds(chatId)) {
+    io.to(`user:${memberId}`).emit('chat:new', {chatId});
+  }
+
+  res.json({chatId});
+});
+
+app.get('/api/chats/:id/members', requireAuth, (req, res) => {
+  const chatId = Number(req.params.id);
+  if(!isMember(chatId, req.user.id)) return res.status(404).json({error: 'not_found'});
+
+  res.json({members: chatMembers(chatId)});
+});
+
+app.post('/api/chats/:id/leave', requireAuth, (req, res) => {
+  const chatId = Number(req.params.id);
+  if(!isMember(chatId, req.user.id)) return res.status(404).json({error: 'not_found'});
+
+  leaveChat(chatId, req.user.id);
+  res.json({ok: true});
 });
 
 app.get('/api/chats/:id/messages', requireAuth, (req, res) => {
