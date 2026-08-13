@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pingo</title>
+  <meta name="description" content="Pingo — a fast, simple messenger.">
+  <meta name="theme-color" content="#EFA800">
+  <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main id="app" class="app">
+    <section id="auth" class="auth">
+      <div class="card">
+        <img class="logo" src="/assets/logo.svg" alt="Pingo">
+        <h1 id="auth-title">Sign up for Pingo</h1>
+        <p id="auth-subtitle" class="muted">Create an account with your email address.</p>
+
+        <form id="form-signup" class="form">
+          <label class="field">
+            <span>Name</span>
+            <input name="name" type="text" autocomplete="name" required maxlength="64">
+          </label>
+          <label class="field">
+            <span>Email</span>
+            <input name="email" type="email" autocomplete="email" required>
+          </label>
+          <label class="field">
+            <span>Password</span>
+            <input name="password" type="password" autocomplete="new-password" required minlength="8">
+          </label>
+          <button class="primary" type="submit">Create account</button>
+          <button class="link" type="button" data-view="login">I already have an account</button>
+        </form>
+
+        <form id="form-verify" class="form hidden">
+          <p class="muted" id="verify-hint"></p>
+          <label class="field">
+            <span>6-digit code</span>
+            <input name="code" type="text" inputmode="numeric" maxlength="6" required>
+          </label>
+          <button class="primary" type="submit">Verify email</button>
+          <button class="link" type="button" id="resend">Send the code again</button>
+        </form>
+
+        <form id="form-login" class="form hidden">
+          <label class="field">
+            <span>Email</span>
+            <input name="email" type="email" autocomplete="email" required>
+          </label>
+          <label class="field">
+            <span>Password</span>
+            <input name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <button class="primary" type="submit">Log in</button>
+          <button class="link" type="button" data-view="signup">Sign up with email</button>
+        </form>
+
+        <p id="auth-error" class="error hidden"></p>
+      </div>
+    </section>
+
+    <section id="messenger" class="messenger hidden">
+      <aside class="sidebar">
+        <header class="sidebar-header">
+          <img class="logo-small" src="/assets/logo.svg" alt="">
+          <span class="brand">Pingo</span>
+          <button id="logout" class="ghost" type="button" title="Log out">Log out</button>
+        </header>
+        <div class="search">
+          <input id="search" type="search" placeholder="Search people by name or email" autocomplete="off">
+        </div>
+        <ul id="results" class="results hidden"></ul>
+        <ul id="chats" class="chats"></ul>
+        <footer class="sidebar-footer">
+          <span id="me" class="muted"></span>
+        </footer>
+      </aside>
+
+      <section class="chat">
+        <header id="chat-header" class="chat-header hidden">
+          <div class="avatar" id="peer-avatar"></div>
+          <div>
+            <div id="peer-name" class="peer-name"></div>
+            <div id="peer-status" class="muted small"></div>
+          </div>
+        </header>
+        <div id="messages" class="messages">
+          <div id="empty" class="empty">
+            <img class="logo" src="/assets/logo.svg" alt="">
+            <p>Select a chat or search for someone to start messaging.</p>
+          </div>
+        </div>
+        <form id="composer" class="composer hidden">
+          <input id="composer-input" type="text" placeholder="Write a message…" autocomplete="off" maxlength="4096">
+          <button class="primary send" type="submit">Send</button>
+        </form>
+      </section>
+    </section>
+  </main>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
