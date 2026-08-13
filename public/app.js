@@ -61,6 +61,19 @@ function showAuthView(view, {email} = {}) {
   showError(null);
 }
 
+let toastTimer;
+function showToast(error) {
+  const node = el('toast');
+  node.textContent = ERRORS[error?.message] || error?.message || 'Something went wrong.';
+  node.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => node.classList.add('hidden'), 4000);
+}
+
+function guard(action) {
+  return Promise.resolve().then(action).catch(showToast);
+}
+
 function initials(name) {
   return name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]).join('');
 }
@@ -99,7 +112,7 @@ function renderChats() {
       badge.classList.remove('hidden');
     }
 
-    item.addEventListener('click', () => openChat(chat.id, peer));
+    item.addEventListener('click', () => guard(() => openChat(chat.id, peer)));
     return item;
   }));
 }
@@ -149,6 +162,17 @@ async function openChat(chatId, peer) {
   el('composer-input').focus();
 }
 
+function closeChat() {
+  state.activeChatId = null;
+  state.activePeer = null;
+  el('messenger').classList.remove('chat-open');
+  el('chat-header').classList.add('hidden');
+  el('composer').classList.add('hidden');
+  el('messages').replaceChildren();
+  el('empty').classList.remove('hidden');
+  renderChats();
+}
+
 async function startChatWith(user) {
   const {chatId} = await api('/chats', {method: 'POST', body: {userId: user.id}});
   await refreshChats();
@@ -159,7 +183,7 @@ function connectSocket() {
   state.socket?.disconnect();
   state.socket = io({auth: {token: state.token}});
 
-  state.socket.on('message:new', async(message) => {
+  state.socket.on('message:new', (message) => guard(async() => {
     if(message.chatId === state.activeChatId) {
       const container = el('messages');
       const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 80;
@@ -169,7 +193,7 @@ function connectSocket() {
     }
 
     await refreshChats();
-  });
+  }));
 
   state.socket.on('typing', ({chatId, name}) => {
     if(chatId !== state.activeChatId) return;
@@ -280,6 +304,7 @@ async function withPending(form, action) {
 
 function bindMessenger() {
   el('logout').addEventListener('click', logout);
+  el('back').addEventListener('click', closeChat);
 
   let searchTimer;
   el('search').addEventListener('input', (event) => {
@@ -301,7 +326,7 @@ function bindMessenger() {
         item.querySelector('.avatar').textContent = initials(user.name);
         item.querySelector('.row-title').textContent = user.name;
         item.querySelector('.row-subtitle').textContent = user.email;
-        item.addEventListener('click', () => startChatWith(user));
+        item.addEventListener('click', () => guard(() => startChatWith(user)));
         return item;
       }) : [emptyResult()]));
     }, 250);
@@ -315,7 +340,7 @@ function bindMessenger() {
 
     input.value = '';
     state.socket.emit('message:send', {chatId: state.activeChatId, text}, (response) => {
-      if(response?.error) showError(new Error(response.error));
+      if(response?.error) showToast(new Error(response.error));
     });
   });
 
